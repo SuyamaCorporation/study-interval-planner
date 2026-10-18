@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Study Interval Work-Break Planner</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  .timer-ring { transform: rotate(-90deg); transform-origin: center; }
+  #timerArc { transition: stroke-dashoffset 0.5s linear; }
+</style>
+</head>
+<body class="bg-gradient-to-br from-slate-900 to-slate-800 min-h-screen text-white">
+<div class="max-w-3xl mx-auto p-4">
+  <h1 class="text-2xl font-bold text-center mb-1">Study Interval Planner</h1>
+  <p class="text-slate-400 text-sm text-center mb-6">Configurable work and break intervals with audio alerts.</p>
+
+  <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+    <!-- Timer -->
+    <div class="bg-slate-800 rounded-2xl p-6 flex flex-col items-center">
+      <div class="relative mb-4">
+        <svg width="200" height="200" viewBox="0 0 200 200" aria-label="Timer progress">
+          <circle cx="100" cy="100" r="88" fill="none" stroke="#1e293b" stroke-width="12"/>
+          <circle id="timerArc" cx="100" cy="100" r="88" fill="none" stroke="#6366f1"
+            stroke-width="12" stroke-linecap="round"
+            stroke-dasharray="552.92" stroke-dashoffset="0" class="timer-ring"/>
+        </svg>
+        <div class="absolute inset-0 flex flex-col items-center justify-center">
+          <div id="phaseLabel" class="text-xs font-semibold uppercase tracking-widest text-slate-400 mb-1">Ready</div>
+          <div id="timeDisplay" class="text-5xl font-bold font-mono">25:00</div>
+          <div id="cycleLabel" class="text-xs text-slate-400 mt-1">Cycle 0 / <span id="maxCycles">4</span></div>
+        </div>
+      </div>
+
+      <div class="flex gap-3 mb-4">
+        <button onclick="toggleTimer()" id="startBtn" class="px-6 py-2 bg-indigo-600 rounded-xl font-semibold hover:bg-indigo-700 transition" aria-label="Start timer">Start</button>
+        <button onclick="resetTimer()" class="px-4 py-2 bg-slate-700 rounded-xl hover:bg-slate-600 transition" aria-label="Reset timer">Reset</button>
+      </div>
+
+      <div class="flex gap-2 text-xs">
+        <span class="px-2 py-1 rounded-full bg-indigo-900 text-indigo-300">Work</span>
+        <span class="px-2 py-1 rounded-full bg-green-900 text-green-300">Short Break</span>
+        <span class="px-2 py-1 rounded-full bg-blue-900 text-blue-300">Long Break</span>
+      </div>
+    </div>
+
+    <!-- Settings -->
+    <div class="bg-slate-800 rounded-2xl p-6 space-y-3">
+      <h2 class="font-semibold text-slate-300 mb-3">Settings</h2>
+      <div>
+        <label class="text-xs text-slate-400">Work Duration: <span id="workVal">25</span> min</label>
+        <input type="range" id="workDur" min="5" max="90" value="25" step="5"
+          oninput="document.getElementById('workVal').textContent=this.value; resetTimer()" class="w-full mt-1">
+      </div>
+      <div>
+        <label class="text-xs text-slate-400">Short Break: <span id="shortVal">5</span> min</label>
+        <input type="range" id="shortBreak" min="1" max="30" value="5" step="1"
+          oninput="document.getElementById('shortVal').textContent=this.value" class="w-full mt-1">
+      </div>
+      <div>
+        <label class="text-xs text-slate-400">Long Break: <span id="longVal">15</span> min</label>
+        <input type="range" id="longBreak" min="5" max="60" value="15" step="5"
+          oninput="document.getElementById('longVal').textContent=this.value" class="w-full mt-1">
+      </div>
+      <div>
+        <label class="text-xs text-slate-400">Cycles Before Long Break: <span id="cyclesVal">4</span></label>
+        <input type="range" id="cyclesBeforeLong" min="2" max="8" value="4"
+          oninput="document.getElementById('cyclesVal').textContent=this.value; document.getElementById('maxCycles').textContent=this.value" class="w-full mt-1">
+      </div>
+
+      <!-- Session History -->
+      <div class="border-t border-slate-700 pt-3">
+        <div class="text-xs font-semibold text-slate-400 uppercase mb-2">Session History</div>
+        <div id="history" class="space-y-1 max-h-32 overflow-y-auto text-xs"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+let running = false;
+let interval = null;
+let secondsLeft = 25 * 60;
+let totalSeconds = 25 * 60;
+let phase = 'work'; // 'work', 'short', 'long'
+let cycle = 0;
+let sessionLog = [];
+const CIRCUMFERENCE = 2 * Math.PI * 88; // 552.92
+
+const PHASE_COLORS = { work:'#6366f1', short:'#22c55e', long:'#3b82f6' };
+const PHASE_NAMES = { work:'Work', short:'Short Break', long:'Long Break' };
+
+function getDuration() {
+  if (phase === 'work') return parseInt(document.getElementById('workDur').value) * 60;
+  if (phase === 'short') return parseInt(document.getElementById('shortBreak').value) * 60;
+  return parseInt(document.getElementById('longBreak').value) * 60;
+}
+
+function updateDisplay() {
+  const m = String(Math.floor(secondsLeft / 60)).padStart(2, '0');
+  const s = String(secondsLeft % 60).padStart(2, '0');
+  document.getElementById('timeDisplay').textContent = `${m}:${s}`;
+
+  const progress = 1 - secondsLeft / totalSeconds;
+  const offset = CIRCUMFERENCE * (1 - progress);
+  document.getElementById('timerArc').style.strokeDashoffset = CIRCUMFERENCE - CIRCUMFERENCE * progress;
+  document.getElementById('timerArc').setAttribute('stroke', PHASE_COLORS[phase]);
+  document.getElementById('phaseLabel').textContent = PHASE_NAMES[phase];
+  const maxC = parseInt(document.getElementById('cyclesBeforeLong').value);
+  document.getElementById('cycleLabel').innerHTML = `Cycle ${cycle} / <span id="maxCycles">${maxC}</span>`;
+}
+
+function toggleTimer() {
+  running = !running;
+  document.getElementById('startBtn').textContent = running ? 'Pause' : 'Resume';
+  if (running) {
+    interval = setInterval(tick, 1000);
+  } else {
+    clearInterval(interval);
+  }
+}
+
+function tick() {
+  secondsLeft--;
+  if (secondsLeft <= 0) {
+    clearInterval(interval);
+    running = false;
+    playAlert();
+    logSession();
+    nextPhase();
+    return;
+  }
+  updateDisplay();
+}
+
+function nextPhase() {
+  const maxC = parseInt(document.getElementById('cyclesBeforeLong').value);
+  if (phase === 'work') {
+    cycle++;
+    phase = cycle % maxC === 0 ? 'long' : 'short';
+  } else {
+    phase = 'work';
+  }
+  totalSeconds = getDuration();
+  secondsLeft = totalSeconds;
+  document.getElementById('startBtn').textContent = 'Start';
+  document.getElementById('timerArc').style.strokeDashoffset = 0;
+  updateDisplay();
+  // Auto-start next phase
+  running = true;
+  document.getElementById('startBtn').textContent = 'Pause';
+  interval = setInterval(tick, 1000);
+}
+
+function resetTimer() {
+  clearInterval(interval);
+  running = false;
+  phase = 'work';
+  cycle = 0;
+  totalSeconds = getDuration();
+  secondsLeft = totalSeconds;
+  document.getElementById('startBtn').textContent = 'Start';
+  document.getElementById('timerArc').style.strokeDashoffset = 0;
+  updateDisplay();
+}
+
+function playAlert() {
+  try {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    [440, 550, 660].forEach((freq, i) => {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.connect(gain); gain.connect(ctx.destination);
+      osc.frequency.value = freq;
+      osc.type = 'sine';
+      gain.gain.setValueAtTime(0.3, ctx.currentTime + i*0.15);
+      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + i*0.15 + 0.4);
+      osc.start(ctx.currentTime + i*0.15);
+      osc.stop(ctx.currentTime + i*0.15 + 0.4);
+    });
+  } catch(e) {}
+}
+
+function logSession() {
+  const now = new Date();
+  const time = now.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'});
+  const dur = Math.round(totalSeconds/60);
+  sessionLog.unshift({time, phase: PHASE_NAMES[phase], dur});
+  const hist = document.getElementById('history');
+  hist.innerHTML = sessionLog.slice(0,10).map(s =>
+    `<div class="flex justify-between text-slate-400">
+      <span>${s.time}</span>
+      <span class="${s.phase==='Work'?'text-indigo-400':s.phase==='Short Break'?'text-green-400':'text-blue-400'}">${s.phase}</span>
+      <span>${s.dur}min</span>
+    </div>`
+  ).join('');
+}
+
+resetTimer();
+</script>
+</body>
+</html>
